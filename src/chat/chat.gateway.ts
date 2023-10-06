@@ -14,7 +14,7 @@ import { ChatService } from './chat.service';
 import { RoomInfo } from './types/ChatRoom.type';
 import { NestGateway } from '@nestjs/websockets/interfaces/nest-gateway.interface';
 
-@UseGuards(JwtGuard) // 메인서버와 아직 미연동 관계로 주석처리
+@UseGuards(JwtGuard)
 @WebSocketGateway(8000, {
   namespace: 'chat',
   cookie: true,
@@ -27,25 +27,29 @@ export class ChatGateway implements NestGateway {
   private connectedClients = new Map<string, any>();
   constructor(private readonly chatService: ChatService) {}
 
+  // 채팅방 조회
   @SubscribeMessage('getRooms')
   async handleConnection(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: any,
   ) {
     this.connectedClients.set(client.id, client);
+    
     return await this.chatService.getChatRooms();
   }
 
+  // 연결이 끊어지는 상황을 잡아 그 피어의 ID를 클라이언트에 전송
   async handleDisconnect(@ConnectedSocket() client: Socket) {
-    if (this.connectedClients.has(client.id))
+    if (this.connectedClients.has(client.id)){
       this.connectedClients.delete(client.id);
+    }
+    
     const user = client['User'];
 
     const message = await this.chatService.outRoom(user);
-    console.log(message);
   }
 
-  // Create room
+  // 방 만들기
   @SubscribeMessage('drinkitRoom')
   async openChatRoom(
     @MessageBody() data: JoinMessage,
@@ -58,16 +62,19 @@ export class ChatGateway implements NestGateway {
       maxNumberOfPerson: data.maxNumberOfPerson,
       currentUser: [],
     };
-    if (data.password) roomInfo.password = data.password;
+    
+    if (data.password) {
+      roomInfo.password = data.password;
+    }
 
     const createResult = await this.chatService.createChatRoom(roomInfo);
 
-    if (!createResult)
+    if (!createResult){
       return {
         message: 'fail to create room. Please try again few minutes later',
       };
+    }
 
-    // Redis createRoom
     client.emit('welcome', `${user.nickname}님이 입장하셨습니다.`);
 
     return { roomId: createResult, ...roomInfo };
@@ -101,7 +108,7 @@ export class ChatGateway implements NestGateway {
     client.leave(roomName);
   }
 
-  // Send message to people in the room.
+  // 모든 사용자에게 메시지 전송
   @SubscribeMessage('sendChat')
   broadcastRoom(
     @MessageBody() data: string,
@@ -115,13 +122,14 @@ export class ChatGateway implements NestGateway {
     return data;
   }
 
+  // 방에 참가
   @SubscribeMessage('joinRoom')
   async joinChatRoom(
     @MessageBody() data,
     @ConnectedSocket() client: Socket,
     @User() user: ChatUser,
   ) {
-    this.chatService.joinRoom(data, user);
+    await this.chatService.joinRoom(data, user);
 
     client.join(data.roomId);
 
